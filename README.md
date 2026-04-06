@@ -1,4 +1,4 @@
-# IDA Pro MCP 插件（轻量化）
+# IDA Pro MCP 插件（轻量化）v1.6.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
@@ -18,7 +18,7 @@
 
 | 路径              | 说明                                                |
 | ----------------- | --------------------------------------------------- |
-| `server`        | 连接 IDA 内插件提供的 JSON-RPC 能力（常用模式）     |
+| `server`        | 连接 IDA 内插件提供的 JSON-RPC 能力（常用模式，端口 13339）     |
 | `idalib_server` | 基于 `idalib` 的无界面模式（需要本机 IDA 运行库） |
 
 ---
@@ -41,8 +41,7 @@ src/ida_pro_mcp/
 ├── __init__.py
 ├── server.py            # MCP 主服务（连接 IDA 插件 JSON-RPC）
 ├── idalib_server.py     # idalib 模式 MCP 服务
-├── mcp-plugin.py        # IDA 侧插件（JSON-RPC 服务）
-├── mcp-plugin_optimized.py  # IDA 侧插件优化版（模块化重构）
+├── mcp-plugin.py        # IDA 侧插件（JSON-RPC 服务，基于 MCP-Test v1.6.0）
 ├── script_utils.py      # 脚本生成辅助
 ├── mcp_config.json      # 默认配置
 └── server_generated.py  # 自动生成（请勿手改）
@@ -54,7 +53,7 @@ src/ida_pro_mcp/
 
 ### 4.1 通用
 
-- Python `>= 3.10`（以 `pyproject.toml` 为准）
+- Python `>= 3.8`（兼容 IDA Pro 内置 Python 环境）
 - IDA Pro `>= 7.5`（插件模式）
 
 ### 4.2 idalib 模式额外要求
@@ -85,9 +84,10 @@ pip install angr frida-tools
 ```json
 {
   "host": "127.0.0.1",
-  "port": 13338,
-  "plugin": { "port": 13338 },
-  "simple_server": { "port": 13338 },
+  "port": 13339,
+  "script_utils_path": "script_utils.py",
+  "plugin": { "port": 13339, "auto_reuse": true, "auto_select_port": true },
+  "simple_server": { "port": 13339 },
   "idalib_server": { "port": 8746 }
 }
 ```
@@ -104,7 +104,7 @@ pip install angr frida-tools
 | `MCP_PORT`        | 覆盖 `server.py` 的 RPC 目标端口                    |
 | `IDALIB_MCP_PORT` | 覆盖 `idalib_server.py` 端口（优先于 `MCP_PORT`） |
 
-> 注：若缺少配置文件，`server.py` 内置端口默认是 `13337`；仓库自带配置将其覆盖为 `13338`。
+> 注：若缺少配置文件，`server.py` 内置端口默认为 `13339`（与新版插件 MCP-Test v1.6.0 一致）。
 
 ---
 
@@ -131,7 +131,7 @@ python -m ida_pro_mcp.server
 | 参数                        | 说明                                                      |
 | --------------------------- | --------------------------------------------------------- |
 | `--transport`             | `stdio`（默认）或 `http://127.0.0.1:8744`             |
-| `--ida-rpc`               | 指定 IDA 插件 RPC 地址（默认 `http://127.0.0.1:13338`） |
+| `--ida-rpc`               | 指定 IDA 插件 RPC 地址（默认 `http://127.0.0.1:13339`） |
 | `--unsafe`                | 启用危险工具                                              |
 | `--config`                | 打印 MCP 客户端配置 JSON                                  |
 | `--auto-run-ida <binary>` | 自动启动 IDA 并加载指定样本（Windows 体验更完整）         |
@@ -151,8 +151,8 @@ python -m ida_pro_mcp.idalib_server <binary_path> --host 127.0.0.1 --port 8746
 
 IDA 插件启动后，可对以下路径发起请求：
 
-- `http://127.0.0.1:13338/mcp`
-- `http://127.0.0.1:13338/jsonrpc`
+- `http://127.0.0.1:13339/mcp`
+- `http://127.0.0.1:13339/jsonrpc`
 
 示例：
 
@@ -161,7 +161,7 @@ import json
 import requests
 
 resp = requests.post(
-    "http://127.0.0.1:13338/mcp",
+    "http://127.0.0.1:13339/jsonrpc",
     headers={"Content-Type": "application/json"},
     data=json.dumps({
         "jsonrpc": "2.0",
@@ -173,7 +173,7 @@ resp = requests.post(
 print(resp.json())
 ```
 
-> 轻量版插件可在 IDA 中通过 `Edit → Plugins → MCP-Test` 启动，热键为 `Ctrl+Alt+T`（macOS 下为 `Ctrl+Option+T`）。
+> 插件可在 IDA 中通过 `Edit → Plugins → IDA Pro MCP Test` 启动，热键为 `Ctrl+Alt+T`（macOS 下为 `Ctrl+Option+T`）。
 
 就是安装插件那一套，ida里面开mcp即可。这些都是给ai看的，方便它甚至不用配置json就能跑
 
@@ -188,6 +188,9 @@ print(resp.json())
 | `python -m compileall src`              | ✅ 通过       |
 | `python -m ida_pro_mcp.server --help`   | ✅ 通过       |
 | `python -m ida_pro_mcp.server --config` | ✅ 通过       |
+| `check_connection`（端口 13339）          | ✅ 通过       |
+| `get_current_context_summary`           | ✅ 通过       |
+| `get_selected_function_overview`        | ✅ 通过       |
 | 轻量版接口验收                            | ✅ 40/40 通过 |
 
 > 当前仓库未包含可直接执行的单元测试集合，`pytest` 依赖存在但需自行安装并补充测试用例。`idalib_server` 在无 IDA 运行库环境下无法直接导入，属于预期行为。
@@ -199,12 +202,12 @@ print(resp.json())
 ### 9.1 MCP 无法连接 IDA
 
 - 确认 IDA 已加载样本
-- 在 IDA 中手动启动插件：`Edit → Plugins → MCP`（默认热键 `Ctrl+Alt+M`）
-- 检查端口占用与 `mcp_config.json` 端口一致性
+- 在 IDA 中手动启动插件：`Edit → Plugins → IDA Pro MCP Test`（默认热键 `Ctrl+Alt+T`）
+- 检查端口占用与 `mcp_config.json` 端口一致性（默认 13339）
 
 ### 9.2 端口冲突
 
-- 修改 `mcp_config.json` 中的 `port` / `plugin.port` / `idalib_server.port`
+- 修改 `mcp_config.json` 中的 `port` / `plugin.port`（默认 13339）
 - 或通过环境变量 `MCP_PORT` / `IDALIB_MCP_PORT` 覆盖
 
 ---
@@ -269,6 +272,6 @@ SOFTWARE.
 
 ## 13. 致谢
 
-- 感谢 mrexodia 提供的原始 IDA Pro MCP 插件
-- 感谢克劳德先生的辛苦付出
-- 感谢所有为该项目做出贡献的开发者和用户
+* 感谢 mrexodia 提供的原始 IDA Pro MCP 插件
+* 感谢克劳德先生的辛苦付出
+* 感谢所有为该项目做出贡献的开发者和用户
