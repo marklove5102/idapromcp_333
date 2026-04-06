@@ -49,11 +49,11 @@ def get_config_file_path():
 def load_config():
     """
     加载配置文件
-    返回配置字典，如果配置文件不存在则返回默认配置
+    返回配置字典，如果配置文件不存则返回默认配置
     """
     default_config = {
         "host": "127.0.0.1",
-        "port": 13337,
+        "port": 13339,
     }
 
     def _pick_port(value):
@@ -121,7 +121,7 @@ def make_jsonrpc_request(method: str, *params):
     jsonrpc_request_id += 1
 
     try:
-        conn.request("POST", "/mcp", json.dumps(request), {
+        conn.request("POST", "/jsonrpc", json.dumps(request), {
             "Content-Type": "application/json"
         })
         response = conn.getresponse()
@@ -150,14 +150,19 @@ def make_jsonrpc_request(method: str, *params):
 def check_connection() -> str:
     """检查 IDA 插件是否正在运行"""
     try:
+        result = make_jsonrpc_request("check_connection")
+        if isinstance(result, dict) and result.get("status") == "ok":
+            version = result.get("version", "未知")
+            server = result.get("server", "IDA Pro MCP Plugin")
+            return f"成功连接到 {server} (版本: {version})"
         metadata = make_jsonrpc_request("get_metadata")
         return f"成功连接到 IDA Pro (打开文件: {metadata['module']})"
     except Exception as e:
         if sys.platform == "darwin":
-            shortcut = "Ctrl+Option+M"
+            shortcut = "Ctrl+Option+T"
         else:
-            shortcut = "Ctrl+Alt+M"
-        return f"无法连接到 IDA Pro! 您是否运行了 Edit -> Plugins -> MCP ({shortcut}) 启动服务器？"
+            shortcut = "Ctrl+Alt+T"
+        return f"无法连接到 IDA Pro! 请在 IDA 中通过 Edit -> Plugins -> IDA Pro MCP Test ({shortcut}) 启动插件服务器。"
 
 # Code taken from https://github.com/namename333/idapromcp_333 (MIT License)
 class MCPVisitor(ast.NodeVisitor):
@@ -308,8 +313,7 @@ def generate_readme():
         if description and description[-1] != ".":
             description += "."
         return f"- `{signature}`: {description}"
-    # 只处理有描述的函数
-    for safe_function in MCP_FUNCTIONS: # Changed from SAFE_FUNCTIONS to MCP_FUNCTIONS
+    for safe_function in MCP_FUNCTIONS:
         if safe_function in visitor.functions:
             print(get_description(safe_function))
     print("\n不安全函数 (`--unsafe` 标志需要)`:\n")
@@ -391,7 +395,6 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env=None):
             "Claude": (os.path.join(os.getenv("APPDATA"), "Claude"), "claude_desktop_config.json"),
             "Cursor": (os.path.join(os.path.expanduser("~"), ".cursor"), "mcp.json"),
             "Windsurf": (os.path.join(os.path.expanduser("~"), ".codeium", "windsurf"), "mcp_config.json"),
-            # Windows does not support Claude Code, yet.
             "LM Studio": (os.path.join(os.path.expanduser("~"), ".lmstudio"), "mcp.json"),
         }
     elif sys.platform == "darwin":
@@ -408,7 +411,6 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env=None):
         configs = {
             "Cline": (os.path.join(os.path.expanduser("~"), ".config", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings"), "cline_mcp_settings.json"),
             "Roo Code": (os.path.join(os.path.expanduser("~"), ".config", "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings"), "mcp_settings.json"),
-            # Claude not supported on Linux
             "Cursor": (os.path.join(os.path.expanduser("~"), ".cursor"), "mcp.json"),
             "Windsurf": (os.path.join(os.path.expanduser("~"), ".codeium", "windsurf"), "mcp_config.json"),
             "Claude Code": (os.path.join(os.path.expanduser("~")), ".claude.json"),
@@ -463,8 +465,8 @@ def install_mcp_servers(*, uninstall=False, quiet=False, env=None):
                 ],
                 "timeout": 1800,
                 "disabled": False,
-                "autoApprove": MCP_FUNCTIONS, # Changed from SAFE_FUNCTIONS to MCP_FUNCTIONS
-                "alwaysAllow": MCP_FUNCTIONS, # Changed from SAFE_FUNCTIONS to MCP_FUNCTIONS
+                "autoApprove": MCP_FUNCTIONS,
+                "alwaysAllow": MCP_FUNCTIONS,
             }
             if merged_env:
                 mcp_servers[mcp.name]["env"] = merged_env
@@ -484,36 +486,47 @@ def install_ida_plugin(*, uninstall: bool = False, quiet: bool = False):
     else:
         ida_plugin_folder = os.path.join(os.path.expanduser("~"), ".idapro", "plugins")
     plugin_destination = os.path.join(ida_plugin_folder, "mcp-plugin.py")
+    script_utils_destination = os.path.join(ida_plugin_folder, "script_utils.py")
+    script_utils_source = os.path.join(SCRIPT_DIR, "script_utils.py")
     if uninstall:
-        if not os.path.exists(plugin_destination):
-            print(f"跳过 IDA 插件卸载\n  路径: {plugin_destination} (未找到)")
-            return
-        os.remove(plugin_destination)
-        if not quiet:
-            print(f"卸载 IDA 插件\n  路径: {plugin_destination}")
+        for dst in [plugin_destination, script_utils_destination]:
+            if os.path.exists(dst):
+                os.remove(dst)
+                if not quiet:
+                    print(f"卸载 IDA 插件文件\n  路径: {dst}")
+            else:
+                if not quiet:
+                    print(f"跳过卸载 (未找到): {dst}")
     else:
         # Create IDA plugins folder
         if not os.path.exists(ida_plugin_folder):
             os.makedirs(ida_plugin_folder)
 
-        # Skip if symlink already up to date
+        # 安装 mcp-plugin.py
         realpath = os.path.realpath(plugin_destination)
         if realpath == IDA_PLUGIN_PY:
             if not quiet:
                 print(f"跳过 IDA 插件安装 (符号链接已是最新)\n  插件: {realpath}")
         else:
-            # Remove existing plugin
             if os.path.lexists(plugin_destination):
                 os.remove(plugin_destination)
-
-            # Symlink or copy the plugin
             try:
                 os.symlink(IDA_PLUGIN_PY, plugin_destination)
             except OSError:
                 shutil.copy(IDA_PLUGIN_PY, plugin_destination)
-
             if not quiet:
                 print(f"安装 IDA Pro 插件 (需要重启 IDA)\n  插件: {plugin_destination}")
+
+        # 安装 script_utils.py
+        if os.path.exists(script_utils_source):
+            if os.path.lexists(script_utils_destination):
+                os.remove(script_utils_destination)
+            try:
+                os.symlink(script_utils_source, script_utils_destination)
+            except OSError:
+                shutil.copy(script_utils_source, script_utils_destination)
+            if not quiet:
+                print(f"安装 script_utils 模块\n  路径: {script_utils_destination}")
 
 def auto_run_ida_and_load_file(binary_path):
     """自动启动 IDA Pro 并加载指定的二进制文件
@@ -526,15 +539,12 @@ def auto_run_ida_and_load_file(binary_path):
     import os
     import platform
     
-    # 确保文件存在
     if not os.path.exists(binary_path):
         print(f"错误: 无法找到文件 '{binary_path}'")
         return
     
-    # 获取 IDA Pro 可执行文件路径
     ida_path = None
     if platform.system() == "Windows":
-        # 尝试从常见位置查找 IDA Pro
         possible_paths = [
             os.path.join(os.getenv("ProgramFiles"), "IDA Pro 7.7", "ida64.exe"),
             os.path.join(os.getenv("ProgramFiles"), "IDA Pro 7.8", "ida64.exe"),
@@ -543,42 +553,31 @@ def auto_run_ida_and_load_file(binary_path):
             os.path.join(os.getenv("ProgramFiles"), "IDA Pro 8.1", "ida64.exe"),
             os.path.join(os.getenv("ProgramFiles"), "IDA Pro 9.1", "ida64.exe"),
         ]
-        
         for path in possible_paths:
             if os.path.exists(path):
                 ida_path = path
                 break
-        
-        # 如果没找到，提示用户指定路径
         if ida_path is None:
-            ida_path = input("请输入 IDA Pro 可执行文件的完整路径 (例如: C:\\Program Files\\IDA Pro 9.1\\ida64.exe): ")
+            ida_path = input("请输入 IDA Pro 可执行文件的完整路径: ")
             if not os.path.exists(ida_path):
                 print(f"错误: 无效的 IDA Pro 路径 '{ida_path}'")
                 return
     else:
-        # Linux/Mac 系统
         print("警告: 自动启动 IDA Pro 功能目前主要支持 Windows 系统")
         ida_path = "ida64"
     
     print(f"正在启动 IDA Pro ({ida_path}) 并加载文件 '{binary_path}'...")
-    
     try:
-        # 启动 IDA Pro 并加载二进制文件
         subprocess.Popen([ida_path, binary_path])
-        
-        # 等待 IDA Pro 启动
         print("IDA Pro 已启动，正在等待加载完成...")
-        time.sleep(10)  # 等待 10 秒，让 IDA 有足够时间加载
-        
+        time.sleep(10)
         print("\n提示:\n")
         print("1. IDA Pro 已成功启动并加载了二进制文件")
-        print("2. 请在 IDA Pro 中手动启动 MCP 插件 (Edit -> Plugins -> MCP 或按 Ctrl-Alt-M)")
+        print("2. 请在 IDA Pro 中手动启动 MCP 插件 (Edit -> Plugins -> IDA Pro MCP Test 或按 Ctrl-Alt-T)")
         print("3. 启动 MCP 服务器以连接到 IDA Pro")
         print("   命令: python -m ida_pro_mcp.server")
-        
     except Exception as e:
         print(f"启动 IDA Pro 时出错: {e}")
-        print("请确保 IDA Pro 已正确安装并且路径正确")
 
 def main():
     global ida_host, ida_port
@@ -608,12 +607,10 @@ def main():
         install_ida_plugin(uninstall=True)
         return
 
-    # NOTE: Developers can use this to generate the README
     if args.generate_docs:
         generate_readme()
         return
 
-    # NOTE: This is silent for automated Cline installations
     if args.install_plugin:
         install_ida_plugin(quiet=True)
 
@@ -621,19 +618,16 @@ def main():
         print_mcp_config()
         return
 
-    # 自动启动 IDA Pro 并加载二进制文件
     if args.auto_run_ida:
         auto_run_ida_and_load_file(args.auto_run_ida)
         return
 
-    # Parse IDA RPC server argument
     ida_rpc = urlparse(args.ida_rpc)
     if ida_rpc.hostname is None or ida_rpc.port is None:
         raise Exception(f"无效的 IDA RPC 服务器: {args.ida_rpc}")
     ida_host = ida_rpc.hostname
     ida_port = ida_rpc.port
 
-    # Remove unsafe tools
     if not args.unsafe:
         mcp_tools = mcp._tool_manager._tools
         for unsafe in UNSAFE_FUNCTIONS:
@@ -649,10 +643,7 @@ def main():
                 raise Exception(f"无效的传输 URL: {args.transport}")
             mcp.settings.host = url.hostname
             mcp.settings.port = url.port
-            # NOTE: npx @modelcontextprotocol/inspector for debugging
-            print(f"MCP 服务器在 http://{mcp.settings.host}:{mcp.settings.port}/sse 可用")
-            mcp.settings.log_level = "INFO"
-            mcp.run(transport="sse")
+            mcp.run(transport="streamable-http")
     except KeyboardInterrupt:
         pass
 
